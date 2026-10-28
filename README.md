@@ -3,6 +3,14 @@
 OpenChat is a lightweight Android application that opens WhatsApp
 conversations without requiring users to save phone numbers to contacts.
 
+## Download OpenChat
+
+[![Download APK](https://img.shields.io/badge/Download-APK-00C853?style=for-the-badge&logo=android&logoColor=white)](https://github.com/AbdullrahmanEissa/OpenChat/releases/latest)
+
+Download the latest Android APK from GitHub Releases.
+
+**Note:** The current APK is a debug build intended for testing.
+
 ## Features
 
 - Open WhatsApp chats using a phone number.
