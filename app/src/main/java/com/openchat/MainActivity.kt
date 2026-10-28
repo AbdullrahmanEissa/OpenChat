@@ -1,12 +1,12 @@
 package com.openchat
 
 import android.app.Activity
-import android.os.Bundle
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -20,21 +20,47 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 
+import com.google.i18n.phonenumbers.NumberParseException
+import com.google.i18n.phonenumbers.PhoneNumberUtil
+import com.google.i18n.phonenumbers.PhoneNumberUtil.PhoneNumberFormat
+import java.util.Locale
+
+private data class Country(
+    val region: String,
+    val name: String,
+    val callingCode: Int
+) {
+    override fun toString(): String = "$name (+$callingCode)"
+}
+
 class MainActivity : Activity() {
 
-    private lateinit var countryCode: Spinner
+    private lateinit var countrySpinner: Spinner
     private lateinit var phoneInput: EditText
 
-    private val countries = listOf(
-        "+20 Egypt",
-        "+1 USA/Canada",
-        "+44 UK",
-        "+971 UAE",
-        "+966 Saudi Arabia"
-    )
+    private val phoneUtil: PhoneNumberUtil =
+        PhoneNumberUtil.getInstance()
+
+    private lateinit var countries: List<Country>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        countries = phoneUtil.getSupportedRegions()
+            .filter { it.length == 2 }
+            .mapNotNull { region ->
+                val name = Locale("", region).displayCountry
+                val callingCode =
+                    phoneUtil.getCountryCodeForRegion(region)
+
+                if (name.isBlank() || callingCode == 0) {
+                    null
+                } else {
+                    Country(region, name, callingCode)
+                }
+            }
+            .distinctBy { it.region }
+            .sortedBy { it.name.lowercase(Locale.ROOT) }
 
         val density = resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
@@ -57,46 +83,54 @@ class MainActivity : Activity() {
         val subtitle = TextView(this).apply {
             text = "Message anyone on WhatsApp"
             textSize = 16f
-            setTextColor(Color.rgb(100, 100, 100))
+            setTextColor(Color.DKGRAY)
             gravity = Gravity.CENTER
         }
 
-        val instruction = TextView(this).apply {
-            text = "Country code"
+        val countryLabel = TextView(this).apply {
+            text = "Country / region"
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.rgb(60, 60, 60))
+            setTextColor(Color.DKGRAY)
         }
 
-        countryCode = Spinner(this).apply {
+        countrySpinner = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
+                android.R.layout.simple_spinner_item,
                 countries
-            )
-            setSelection(0)
+            ).also {
+                it.setDropDownViewResource(
+                    android.R.layout.simple_spinner_dropdown_item
+                )
+            }
+
+            val egyptIndex =
+                countries.indexOfFirst { it.region == "EG" }
+
+            if (egyptIndex >= 0) {
+                setSelection(egyptIndex)
+            }
         }
 
         val phoneLabel = TextView(this).apply {
             text = "Phone number"
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.rgb(60, 60, 60))
+            setTextColor(Color.DKGRAY)
         }
 
         phoneInput = EditText(this).apply {
-            hint = "Enter number without country code"
+            hint = "Enter phone number"
             textSize = 17f
             inputType = android.text.InputType.TYPE_CLASS_PHONE
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_GO
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            contentDescription = "Phone number"
         }
 
         val openButton = Button(this).apply {
             text = "Open WhatsApp"
-            textSize = 16f
             isAllCaps = false
             setOnClickListener { openWhatsApp() }
         }
@@ -105,34 +139,29 @@ class MainActivity : Activity() {
             text = "Free · Open source · No ads"
             textSize = 13f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(120, 120, 120))
+            setTextColor(Color.GRAY)
         }
 
-        fun addView(
-            view: View,
-            topMargin: Int = 0,
-            bottomMargin: Int = 12
-        ) {
+        fun addView(view: View, bottomMargin: Int = 12) {
             root.addView(
                 view,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    this.topMargin = dp(topMargin)
                     this.bottomMargin = dp(bottomMargin)
                 }
             )
         }
 
-        addView(title, bottomMargin = 6)
-        addView(subtitle, bottomMargin = 32)
-        addView(instruction, bottomMargin = 4)
-        addView(countryCode, bottomMargin = 20)
-        addView(phoneLabel, bottomMargin = 4)
-        addView(phoneInput, bottomMargin = 20)
-        addView(openButton, bottomMargin = 24)
-        addView(footer, bottomMargin = 0)
+        addView(title, 6)
+        addView(subtitle, 32)
+        addView(countryLabel, 4)
+        addView(countrySpinner, 20)
+        addView(phoneLabel, 4)
+        addView(phoneInput, 20)
+        addView(openButton, 24)
+        addView(footer, 0)
 
         setContentView(root)
 
@@ -154,60 +183,64 @@ class MainActivity : Activity() {
             return
         }
 
-        // Accept digits, spaces, parentheses, hyphens and a leading plus.
-        if (!rawNumber.matches(Regex("^\\+?[0-9\\s()\\-]+$"))) {
-            phoneInput.error = "Enter a valid phone number"
+        val selectedCountry =
+            countrySpinner.selectedItem as? Country
+
+        if (selectedCountry == null) {
+            showMessage("Select a country or region")
             return
         }
-
-        val digits = rawNumber.filter { it in '0'..'9' }
-
-        if (digits.length !in 7..15) {
-            phoneInput.error = "Check the phone number"
-            return
-        }
-
-        val selectedCode = countryCode.selectedItem
-            .toString()
-            .substringBefore(" ")
-            .removePrefix("+")
-
-        val normalizedNumber = when {
-            rawNumber.startsWith("+") -> digits
-
-            // A number beginning with the selected country code is
-            // already international, so don't prepend the code again.
-            digits.startsWith(selectedCode) &&
-                digits.length > selectedCode.length -> digits
-
-            // Egyptian local numbers commonly start with 0.
-            selectedCode == "20" && digits.startsWith("0") ->
-                selectedCode + digits.drop(1)
-
-            else -> selectedCode + digits
-        }
-
-        if (normalizedNumber.length !in 7..15) {
-            phoneInput.error = "Check the phone number"
-            return
-        }
-
-        val inputMethodManager =
-            getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-
-        inputMethodManager.hideSoftInputFromWindow(phoneInput.windowToken, 0)
-
-        val uri = Uri.parse("https://wa.me/$normalizedNumber")
-        val intent = Intent(Intent.ACTION_VIEW, uri)
 
         try {
+            // libphonenumber handles local and international formats.
+            // The selected region is used for numbers without a country prefix.
+            val parsedNumber = phoneUtil.parse(
+                rawNumber,
+                selectedCountry.region
+            )
+
+            if (!phoneUtil.isValidNumber(parsedNumber)) {
+                phoneInput.error = "Check the phone number"
+                return
+            }
+
+            val e164 = phoneUtil.format(
+                parsedNumber,
+                PhoneNumberFormat.E164
+            )
+
+            // wa.me expects the international number without "+".
+            val digitsOnly = e164.removePrefix("+")
+
+            val inputMethodManager =
+                getSystemService(
+                    Context.INPUT_METHOD_SERVICE
+                ) as InputMethodManager
+
+            inputMethodManager.hideSoftInputFromWindow(
+                phoneInput.windowToken,
+                0
+            )
+
+            val intent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://wa.me/$digitsOnly")
+            )
+
             startActivity(intent)
+
+        } catch (_: NumberParseException) {
+            phoneInput.error = "Enter a valid phone number"
         } catch (_: Exception) {
-            Toast.makeText(
-                this,
-                "Unable to open WhatsApp",
-                Toast.LENGTH_LONG
-            ).show()
+            showMessage("Unable to open WhatsApp or a browser")
         }
+    }
+
+    private fun showMessage(message: String) {
+        Toast.makeText(
+            this,
+            message,
+            Toast.LENGTH_LONG
+        ).show()
     }
 }
